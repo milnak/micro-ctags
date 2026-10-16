@@ -2,11 +2,11 @@
   "Name": "ctags",
   "Description": "Jump to any function, class or heading.",
   "Website": "https://github.com/milnak/micro-ctags",
-  "Tags": ["ctags", "fzf", "symbols", "code browser", "jump"],
+  "Tags": ["ctags", "fzf", "symbols"],
   "Versions": [
     {
-      "Version": "0.0.1",
-      "Url": "https://github.com/milnak/micro-ctags/archive/v0.0.1.zip",
+      "Version": "1.0.0",
+      "Url": "https://github.com/micro-editor/ctags-plugin/archive/v1.0.0.zip",
       "Require": {
         "micro": ">=2.0.0"
       }

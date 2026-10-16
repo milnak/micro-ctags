@@ -1,8 +1,11 @@
 # micro-ctags - Jump functionaltiy
 
-A plugin for micro editor.
+The ctags plugin for the [micro editor](https://github.com/micro-editor/micro) provides "tags" lookup for any function,
+class or heading with jump functionality to go directly to the selected line.
 
-Jump to any function, class or heading.
+## Supports multiple platforms
+
+This plugin has been tested on Windows and Linux.
 
 ## Supports many languages
 
