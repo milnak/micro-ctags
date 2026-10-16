@@ -47,7 +47,8 @@ end
 function InvokeCTags(bp)
     local filename = bp.Buf.Path
 
-    local output, err = shell.RunCommand("ctags --fields=+lnS -f - " .. filename)
+    -- flags: "afmikKlnsStz"
+    local output, err = shell.RunCommand("ctags --fields=+lnS --sort=foldcase -f - " .. filename)
     if err ~= nil then
         micro.InfoBar():Error("ctags failed: " .. tostring(err))
         return {}
@@ -89,17 +90,33 @@ local function InvokeFzf(tags)
 
 	micro.Log("[ctags] Temporary tag file created: " .. filename)
 
-	-- --header='Choose item to jump to or ESC to cancel'
-	local command = "fzf --reverse --border-label 'ctags' --delimiter=\\t --border=rounded --accept-nth 2 < " .. filename
+	-- Run fzf to select a tag from the temporary file
+
+    local prefix
+    local suffix
+    if package.config:sub(1, 1) == "\\" then
+        prefix = "CMD.EXE /C \"type " .. filename
+        suffix =  "\""
+    else
+        prefix = "bash -c \"cat " .. filename
+        suffix =  "\""
+    end
+
+	local command = prefix .. " | fzf --reverse --border-label \"ctags\" --delimiter=\\t --border=rounded --accept-nth 2" .. suffix
 	micro.Log("[ctags] Running command: " .. command)
-	local handle = assert(io.popen(command, 'r'))
-	local output = assert(handle:read('*a'))
+
+    -- Use RunInteractiveShell rather than popen() for better control over the shell environment.
+    -- param 2: non-interactive shell. Don't want output from fzf sent to screen.
+    -- param 3: wait for the command to complete before returning.
+    local output, err = shell.RunInteractiveShell(command, false, true)
+
 	-- clean up stdout -- remove leading/trailing whitespace and newlines
 	output = string.gsub(output, '^%s+', '')
 	output = string.gsub(output, '%s+$', '')
 	output = string.gsub(output, '[\n\r]+', '')
 	micro.Log("[ctags] Fzf returned output: [" .. tostring(output) .. "]")
-	handle:close()
+
+    -- Remove temporary file
     os.remove(filename)
 
 	if output == nil or output == "" then
@@ -128,6 +145,19 @@ function init()
     local output, err = shell.RunCommand("fzf --version")
     if err ~= nil then
         micro.InfoBar():Error("[ctags] fzf is not installed or not in the system PATH.")
+        return
+    end
+
+    local major, minor, patch = output:match("^%s*(%d+)%.(%d+)%.(%d+)")
+    if major == nil then
+        micro.InfoBar():Error("[ctags] Unable to parse fzf version: " .. output)
+        return
+    end
+
+    major, minor, patch = tonumber(major), tonumber(minor), tonumber(patch)
+    -- --accept-nth requires fzf 0.60.2 or newer.
+    if major == 0 and (minor < 60 or (minor == 60 and patch < 2)) then
+        micro.InfoBar():Error("[ctags] fzf 0.60.2 or newer is required.")
         return
     end
 
