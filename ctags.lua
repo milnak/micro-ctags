@@ -107,14 +107,17 @@ local function InvokeFzf(tags)
         suffix =  "\""
     end
 
-	local command = prefix .. " | fzf --reverse --border-label \"ctags\" --delimiter=\\t --border=rounded --accept-nth 2" .. suffix
+	local command = prefix .. " | fzf --reverse --delimiter=\\t --no-info --header \"Press Enter to choose function, or ESC to exit\" --border-label \"ctags\" --border=rounded --margin=10% --accept-nth 2" .. suffix
 	micro.Log("[ctags] Running command: " .. command)
 
     -- Use RunInteractiveShell rather than popen() for better control over the shell environment.
     -- param 2: non-interactive shell. Don't want output from fzf sent to screen.
     -- param 3: wait for the command to complete before returning.
     local output, err = shell.RunInteractiveShell(command, false, true)
-
+    if err ~= nil then
+        micro.InfoBar():Error("fzf failed: " .. tostring(err))
+        return nil
+    end
 	-- clean up stdout -- remove leading/trailing whitespace and newlines
 	output = string.gsub(output, '^%s+', '')
 	output = string.gsub(output, '%s+$', '')
