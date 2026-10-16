@@ -2,6 +2,11 @@ local micro = import("micro")
 local shell = import("micro/shell")
 local config = import("micro/config")
 
+local function OS()
+    local home = os.getenv("HOME")
+    return home ~= nil and home:sub(1, 1) == "/" and "unix" or "windows"
+end
+
 -- Example output from "ctags.exe --fields=+lnS"
 -- "~Hash\t./Hash.cpp\t/^Hash::~Hash()$/;"\tf\tline:23\tlanguage:C++\tclass:foo::Hash\tsignature:()"
 local function ParseCTags(output)
@@ -94,7 +99,7 @@ local function InvokeFzf(tags)
 
     local prefix
     local suffix
-    if package.config:sub(1, 1) == "\\" then
+    if OS() == "windows" then
         prefix = "CMD.EXE /C \"type " .. filename
         suffix =  "\""
     else
