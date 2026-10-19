@@ -33,9 +33,13 @@ V, Varlink, Vera, Verilog, VHDL, Vim, WindRes, XML, XRC, XSLT, YACC, Yaml, YumRe
 
 ```bash
 sudo apt-get update
-sudo apt-get -y install micro exuberant-ctags
+sudo apt-get -y install micro
 
-# Get latest version from GitHub API - Requires fzf 0.60.2 or newer.
+# universal-ctags (not exuberant-ctags) is required.
+sudo apt-get -y remove exuberant-ctags
+sudo apt-get -y install universal-ctags
+
+# Install latest version of fzf from GitHub API - Requires fzf 0.60.2 or newer.
 FZF_VERSION=$(curl -s "https://api.github.com/repos/junegunn/fzf/releases/latest" | grep -Po '"tag_name": "v\K[0-9.]+')
 wget -qO fzf.tar.gz "https://github.com/junegunn/fzf/releases/latest/download/fzf-$FZF_VERSION-linux_amd64.tar.gz"
 sudo tar xf fzf.tar.gz -C /usr/local/bin
@@ -57,7 +61,7 @@ mkdir ~/.config/micro/plug
 git clone https://github.com/milnak/micro-ctags ~/.config/micro/plug/ctags
 ```
 
-("micro --plugin install ctags" coming soon)
+("micro --plugin install ctags" functionality coming soon)
 
 ## Usage
 
@@ -65,7 +69,11 @@ Use "Ctrl-E > ctags" to jump.
 
 ## Debugging
 
-use `micro -debug <file>` to write micro log file to "log.txt".
+Use `micro -debug <file>` to write micro log file to "log.txt".
+
+## Future
+
+Jump directly to highlighted tag if a tag matches highlighted word at cursor.
 
 ## Known issues
 
