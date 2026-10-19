@@ -299,29 +299,36 @@ local function InvokeFzf(bufferFilename, tags)
     -- Run fzf to select a tag from the temporary file
 
     local prefix
+    local quoteChar
+    local altQuoteChar
     local suffix
     if OS() == "windows" then
         prefix = "CMD.EXE /C type " .. filename
+        quoteChar = "\""
+        altQuoteChar = "'"
         suffix = ""
     else
         prefix = "bash -c \"cat " .. filename
+        quoteChar = "'"
+        altQuoteChar = "\\\""
         suffix = "\""
     end
 
     -- --header \"Press Enter to choose function, or ESC to exit\"
     local command = prefix
         .. " | fzf --reverse"
-        .. " --header \"Tags from '" .. get_filename(bufferFilename) .. "'\""
-        .. " --delimiter \"·\""
+        .. " --header " ..
+        quoteChar .. "Tags from " .. altQuoteChar .. get_filename(bufferFilename) .. altQuoteChar .. quoteChar
+        .. " --delimiter " .. quoteChar .. "·" .. quoteChar
         .. " --no-info"
-        .. " --margin \"20%\""
+        .. " --margin " .. quoteChar .. "20%" .. quoteChar
         .. " --border=rounded"
-        .. " --border-label \"ctags\""
-        .. " --with-nth \"1\""
-        .. " --accept-nth \"2\""
-        .. " --preview-window \"down:1\""
-        .. " --preview-window \"border-sharp\""
-        .. " --preview \"echo Type: {3}; Line: {2}\""
+        .. " --border-label " .. quoteChar .. "ctags" .. quoteChar
+        .. " --with-nth " .. quoteChar .. "1" .. quoteChar
+        .. " --accept-nth " .. quoteChar .. "2" .. quoteChar
+        .. " --preview-window " .. quoteChar .. "down:1" .. quoteChar
+        .. " --preview-window " .. quoteChar .. "border-sharp" .. quoteChar
+        .. " --preview " .. quoteChar .. "echo Type: {3}; Line: {2}" .. quoteChar
         .. suffix
     micro.Log("[ctags] Running command: " .. command)
 
