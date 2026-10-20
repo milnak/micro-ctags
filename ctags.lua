@@ -3,6 +3,7 @@ local shell = import("micro/shell")
 local config = import("micro/config")
 
 local function OS()
+    -- Returns "unix" or "windows" based on the HOME environment variable
     local home = os.getenv("HOME")
     return home ~= nil and home:sub(1, 1) == "/" and "unix" or "windows"
 end
@@ -269,12 +270,14 @@ local function InvokeFzf(bufferFilename, tags)
     end
 
     for _, tag in ipairs(tags) do
-        -- {1} = name[..signature]
-        -- {2} = line
-        -- {3} = kind
-        local tagInfo = tag.name .. (tag.signature or "")
-            .. "·" .. tostring(tag.line)
+        -- IMPORTANT: Ensure the order here matches the fzf indices
+        -- {1} = line_number
+        -- {2} = kind
+        -- {3} = name[..signature]
+        local tagInfo =
+            tostring(tag.line)
             .. "·" .. tostring(tag.kind)
+            .. "·" .. tag.name .. (tag.signature or "")
         local ok, writeErr = file:write(tagInfo .. "\n")
         micro.Log("[ctags] Writing tag to temporary file: " .. tagInfo)
 
@@ -305,30 +308,42 @@ local function InvokeFzf(bufferFilename, tags)
     if OS() == "windows" then
         prefix = "CMD.EXE /C type " .. filename
         quoteChar = "\""
-        altQuoteChar = "'"
         suffix = ""
     else
         prefix = "bash -c \"cat " .. filename
         quoteChar = "'"
-        altQuoteChar = "\\\""
         suffix = "\""
     end
 
-    -- --header \"Press Enter to choose function, or ESC to exit\"
+    -- IMPORTANT: Ensure the indices here match the ctags file output
+    -- {1} = line_number
+    -- {2} = kind
+    -- {3} = name[..signature]
     local command = prefix
-        .. " | fzf --reverse"
-        .. " --header " ..
-        quoteChar .. "Tags from " .. altQuoteChar .. get_filename(bufferFilename) .. altQuoteChar .. quoteChar
+        .. " | fzf"
+        -- Define which fields to print on accept
+        .. " --accept-nth " .. quoteChar .. "1" .. quoteChar
+        -- Transform the presentation of each line using field index expressions
+        .. " --with-nth " .. quoteChar .. "3" .. quoteChar
+        -- Field delimiter regex (default: AWK-style)
         .. " --delimiter " .. quoteChar .. "·" .. quoteChar
-        .. " --no-info"
-        .. " --margin " .. quoteChar .. "20%" .. quoteChar
-        .. " --border=rounded"
         .. " --border-label " .. quoteChar .. "ctags" .. quoteChar
-        .. " --with-nth " .. quoteChar .. "1" .. quoteChar
-        .. " --accept-nth " .. quoteChar .. "2" .. quoteChar
-        .. " --preview-window " .. quoteChar .. "down:1" .. quoteChar
+        .. " --border " .. quoteChar .. "rounded" .. quoteChar
+        .. " --cycle"
+        .. " --footer " .. quoteChar .. "Tags from " .. get_filename(bufferFilename) .. quoteChar
+        .. " --header " .. quoteChar .. "Press Enter to choose function, or ESC to exit" .. quoteChar
+        .. " --highlight-line"
+        .. " --ignore-case"
+        .. " --info " .. quoteChar .. "inline" .. quoteChar
+        .. " --input-border " .. quoteChar .. "dashed" .. quoteChar
+        .. " --layout " .. quoteChar .. "reverse-list" .. quoteChar
+        .. " --margin " .. quoteChar .. "10%,10%,10%,10%" .. quoteChar
+        .. " --pointer " .. quoteChar .. "➤" .. quoteChar
+        .. " --preview " .. quoteChar .. "echo Type: {2}; Line: {1}" .. quoteChar
         .. " --preview-window " .. quoteChar .. "border-sharp" .. quoteChar
-        .. " --preview " .. quoteChar .. "echo Type: {3}; Line: {2}" .. quoteChar
+        .. " --preview-window " .. quoteChar .. "down:1" .. quoteChar
+        -- TODO: Add "--query" to start fzf with a pre-filled search query
+        -- .. " --query " .. quoteChar .. query .. quoteChar
         .. suffix
     micro.Log("[ctags] Running command: " .. command)
 
@@ -337,7 +352,7 @@ local function InvokeFzf(bufferFilename, tags)
     -- param 3: wait for the command to complete before returning.
     local output, err = shell.RunInteractiveShell(command, false, true)
     if err ~= nil then
-        micro.Log("fzf failed: " .. tostring(err))
+        micro.InfoBar():Error("fzf failed: " .. tostring(err))
         return nil
     end
     -- clean up stdout -- remove leading/trailing whitespace and newlines
