@@ -2,7 +2,7 @@ local micro = import("micro")
 local shell = import("micro/shell")
 local config = import("micro/config")
 
-local json = require("json")
+local json = import("./json")
 
 -- Detect the shell platform from the HOME environment variable.
 local function OS()
