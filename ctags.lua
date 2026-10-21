@@ -242,6 +242,7 @@ function init()
             micro.Log("[ctags] Jumping to line number: " .. lineNumber)
             bp.Cursor.X = 0
             bp.Cursor.Y = lineNumber - 1
+            bp.Cursor:Relocate()
             micro.InfoBar():Message(string.format("Jumped to line %i", lineNumber))
         end,
         config.NoComplete
