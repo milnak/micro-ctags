@@ -12,37 +12,38 @@ local function OS()
     return home ~= nil and home:sub(1, 1) == "/" and "unix" or "windows"
 end
 
--- Collect tag records from newline-delimited ctags JSON output.
+-- Run ctags for the current buffer and return its tags, or an empty table on failure.
 -- Example output from "ctags.exe --fields=+lnS --output-format=json":
 -- {"_type": "tag", "name": "All platforms", "path": ".\\README.md", ...}
-local function ParseCTagsJson(output)
+function InvokeCTags(bp)
+    local bufferFilename = bp.Buf.Path
+
     local tags = {}
 
-    for line in output:gmatch("[^\r\n]+") do
-        micro.Log("[ctags] Parsing JSON line: " .. line)
-        local tag = json_decode(line)
+    local output, err = shell.ExecCommand(
+        "ctags",
+        "--fields=+lnS",
+        "--output-format=json",
+        "--sort=foldcase",
+        "-f",
+        "-",
+        bufferFilename)
+    if err ~= nil then
+        micro.InfoBar():Error(err)
+        return {}
+    else
+        -- Collect tag records from newline-delimited ctags JSON output.
+        for line in output:gmatch("[^\r\n]+") do
+            micro.Log("[ctags] Parsing JSON line: " .. line)
+            local tag = json_decode(line)
 
-        if tag ~= nil and tag._type == "tag" then
-            table.insert(tags, tag)
+            if tag ~= nil and tag._type == "tag" then
+                table.insert(tags, tag)
+            end
         end
     end
 
     return tags
-end
-
--- Run ctags for the current buffer and return its tags, or an empty table on failure.
-function InvokeCTags(bp)
-    local bufferFilename = bp.Buf.Path
-
-    local ctagsCommand = "ctags --fields=+lnS --output-format=json --sort=foldcase -f - " .. bufferFilename
-    micro.Log("[ctags] Running command: " .. ctagsCommand)
-    local output, err = shell.RunCommand(ctagsCommand)
-    if err ~= nil then
-        micro.InfoBar():Error("ctags failed: " .. tostring(err))
-        return {}
-    end
-
-    return ParseCTagsJson(output)
 end
 
 -- Present tags in fzf with an optional query and return the selected line or nil.
@@ -70,8 +71,8 @@ local function InvokeFzf(bufferFilename, tags, query)
         -- {3} = name[..signature]
         local tagInfo =
             tostring(tag.line)
-            .. "·" .. tostring(tag.kind)
-            .. "·" .. tag.name .. (tag.signature or "")
+            .. "," .. tostring(tag.kind)
+            .. "," .. tag.name .. (tag.signature or "")
         local ok, writeErr = file:write(tagInfo .. "\n")
         micro.Log("[ctags] Writing tag to temporary file: " .. tagInfo)
 
@@ -94,7 +95,6 @@ local function InvokeFzf(bufferFilename, tags, query)
     micro.Log("[ctags] Temporary tag file created: " .. filename)
 
     -- Run fzf to select a tag from the temporary file
-
     local prefix
     local quoteChar
     local altQuoteChar
@@ -116,26 +116,26 @@ local function InvokeFzf(bufferFilename, tags, query)
     local command = prefix
         .. " | fzf"
         -- Define which fields to print on accept
-        .. " --accept-nth " .. quoteChar .. "1" .. quoteChar
+        .. " --accept-nth=1"
         -- Transform the presentation of each line using field index expressions
-        .. " --with-nth " .. quoteChar .. "3" .. quoteChar
+        .. " --with-nth=3"
         -- Field delimiter regex (default: AWK-style)
-        .. " --delimiter " .. quoteChar .. "·" .. quoteChar
-        .. " --border-label " .. quoteChar .. "ctags" .. quoteChar
-        .. " --border " .. quoteChar .. "rounded" .. quoteChar
+        .. " --delimiter=,"
+        .. " --border-label=ctags"
+        .. " --border=rounded"
         .. " --cycle"
         .. " --footer " .. quoteChar .. "Tags from " .. bufferFilename .. quoteChar
         .. " --header " .. quoteChar .. "Press Enter to choose function, or ESC to exit" .. quoteChar
+        .. " --height 50%"
         .. " --highlight-line"
         .. " --ignore-case"
-        .. " --info " .. quoteChar .. "inline" .. quoteChar
-        .. " --input-border " .. quoteChar .. "dashed" .. quoteChar
-        .. " --layout " .. quoteChar .. "reverse-list" .. quoteChar
-        .. " --margin " .. quoteChar .. "10%,10%,10%,10%" .. quoteChar
-        .. " --pointer " .. quoteChar .. "➤" .. quoteChar
+        .. " --info=inline"
+        .. " --input-border=none"
+        .. " --layout=reverse-list"
+        .. " --margin=10%,10%,10%,10%"
+        .. " --pointer=➤"
         .. " --preview " .. quoteChar .. "echo Type: {2}; Line: {1}" .. quoteChar
-        .. " --preview-window " .. quoteChar .. "border-sharp" .. quoteChar
-        .. " --preview-window " .. quoteChar .. "down:1" .. quoteChar
+        .. " --preview-window=down:1,border-none"
     if query ~= nil then
         command = command .. " --query " .. quoteChar .. query .. quoteChar
     end
@@ -163,9 +163,7 @@ local function InvokeFzf(bufferFilename, tags, query)
         return nil
     end
 
-
     local lineNumber = tonumber(output)
-
     if lineNumber == nil then
         micro.InfoBar():Error("fzf returned an invalid line number: " .. tostring(output))
         return nil
@@ -227,9 +225,7 @@ function init()
                 end
             end
 
-
             -- Parse ctags for file in current buffer.
-
             local tags = InvokeCTags(bp)
             if tags == nil or #tags == 0 then
                 micro.InfoBar():Message("No tags found.")
@@ -237,7 +233,6 @@ function init()
             end
 
             -- Invoke fzf to select a tag from the list of tags.
-
             local lineNumber = InvokeFzf(bp.Buf.GetName(bp.Buf), tags, query)
             if lineNumber == nil then
                 micro.Log("[ctags] Cancelled.")
@@ -245,7 +240,6 @@ function init()
             end
 
             -- Jump to the line number for the selected tag.
-
             micro.Log("[ctags] Jumping to line number: " .. lineNumber)
             bp.Cursor.Y = lineNumber - 1
             micro.InfoBar():Message(string.format("Jumped to line %i", lineNumber))
