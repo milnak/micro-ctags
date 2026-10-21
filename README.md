@@ -77,4 +77,6 @@ Jump directly to highlighted tag if a tag matches highlighted word at cursor.
 
 ## Known issues
 
-On Windows, fzf.exe window isn't always getting focus.
+If ctags is installed using "scoop" on Windows, it cant be found unless the
+installation folder, e.g. '~\scoop\apps\universal-ctags\current' is added
+to the front of $env:PATH.  This isn't an issue with fzf.
