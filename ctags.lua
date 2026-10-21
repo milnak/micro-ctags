@@ -2,6 +2,8 @@ local micro = import("micro")
 local shell = import("micro/shell")
 local config = import("micro/config")
 
+local go_filepath = import("path/filepath")
+
 local json = import("./json")
 
 -- Detect the shell platform from the HOME environment variable.
@@ -232,17 +234,21 @@ function init()
             end
 
             -- Invoke fzf to select a tag from the list of tags.
-            local lineNumber = InvokeFzf(bp.Buf.GetName(bp.Buf), tags, query)
+            -- Buffer:AbsPath returns the absolute path to the file on disk
+            local _, fileName = go_filepath.Split(bp.Buf.AbsPath)
+            local lineNumber = InvokeFzf(fileName, tags, query)
             if lineNumber == nil then
                 micro.Log("[ctags] Cancelled.")
                 return
             end
 
-            -- Jump to the line number for the selected tag.
-            micro.Log("[ctags] Jumping to line number: " .. lineNumber)
-            bp.Cursor.X = 0
-            bp.Cursor.Y = lineNumber - 1
-            bp.Cursor:Relocate()
+            -- ResetSelection resets the user's selection
+            -- Without this, GotoLoc won't move the cursor correctly if there was a previous selection.
+            bp.Cursor:ResetSelection()
+
+            -- GotoLoc puts the cursor at the given cursor's location and gives the current cursor its selection too
+            bp.Cursor:GotoLoc({ X = 0, Y = lineNumber - 1 })
+
             micro.InfoBar():Message(string.format("Jumped to line %i", lineNumber))
         end,
         config.NoComplete
