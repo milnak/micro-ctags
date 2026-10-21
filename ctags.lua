@@ -5,11 +5,10 @@ local config = import("micro/config")
 local json = import("./json")
 
 -- Detect the shell platform from the HOME environment variable.
-local function OS()
-    -- Returns "unix" or "windows" based on the HOME environment variable
-    -- Maybe there's a better way to do this, but I haven't figured one out yet.
-    local home = os.getenv("HOME")
-    return home ~= nil and home:sub(1, 1) == "/" and "unix" or "windows"
+local function GetOS()
+    -- Returns "unix" or "windows" based on the OS environment variable
+    local osEnv = os.getenv("OS")
+    return osEnv ~= nil and (osEnv:find("Windows") ~= nil and "windows" or "unix")
 end
 
 -- Run ctags for the current buffer and return its tags, or an empty table on failure.
@@ -99,7 +98,7 @@ local function InvokeFzf(bufferFilename, tags, query)
     local quoteChar
     local altQuoteChar
     local suffix
-    if OS() == "windows" then
+    if GetOS() == "windows" then
         prefix = "CMD.EXE /C type " .. filename
         quoteChar = "\""
         suffix = ""
@@ -241,6 +240,7 @@ function init()
 
             -- Jump to the line number for the selected tag.
             micro.Log("[ctags] Jumping to line number: " .. lineNumber)
+            bp.Cursor.X = 0
             bp.Cursor.Y = lineNumber - 1
             micro.InfoBar():Message(string.format("Jumped to line %i", lineNumber))
         end,
