@@ -1,256 +1,278 @@
 local micro = import("micro")
 local shell = import("micro/shell")
 local config = import("micro/config")
+local buffer = import("micro/buffer")
+local util = import("micro/util")
 
 local go_filepath = import("path/filepath")
+local go_os = import("os")
+local go_runtime = import("runtime")
 
 local json = import("./json")
+local history = {}
 
--- Detect the shell platform from the HOME environment variable.
-local function GetOS()
-    -- Returns "unix" or "windows" based on the OS environment variable
-    local osEnv = os.getenv("OS")
-    return osEnv ~= nil and (osEnv:find("Windows") ~= nil and "windows" or "unix")
+-- Return whether Micro is running on Windows.
+local function IsWindows()
+    return go_runtime.GOOS == "windows"
 end
 
--- Run ctags for the current buffer and return its tags, or an empty table on failure.
--- Example output from "ctags.exe --fields=+lnS --output-format=json":
--- {"_type": "tag", "name": "All platforms", "path": ".\\README.md", ...}
-function InvokeCTags(bp)
-    local bufferFilename = bp.Buf.Path
+-- Quote one argument for Micro's shellquote parser, including on Windows.
+local function QuoteArgument(value)
+    return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
+end
 
-    local tags = {}
+-- Read a plugin setting from the ctags namespace.
+local function Setting(name)
+    return config.GetGlobalOption("ctags." .. name)
+end
 
-    local output, err = shell.ExecCommand(
-        "ctags",
-        "--fields=+lnS",
-        "--output-format=json",
-        "--sort=foldcase",
-        "-f",
-        "-",
-        bufferFilename)
+-- Report a plugin-prefixed error in Micro's info bar.
+local function Fail(message)
+    micro.InfoBar():Error("[ctags] " .. tostring(message))
+end
+
+-- Replace control characters so values cannot split picker fields or records.
+local function CleanField(value)
+    return (tostring(value or ""):gsub("[%z\1-\31\127]", " "))
+end
+
+-- Verify the configured tools and minimum fzf version, reporting failures.
+local function CheckTools()
+    local output, err = shell.ExecCommand(Setting("executable"), "--version")
     if err ~= nil then
-        micro.InfoBar():Error(err)
-        return {}
-    else
-        -- Collect tag records from newline-delimited ctags JSON output.
-        for line in output:gmatch("[^\r\n]+") do
-            micro.Log("[ctags] Parsing JSON line: " .. line)
-            local tag = json_decode(line)
+        Fail("Unable to run Universal Ctags: " .. tostring(err))
+        return false
+    end
+    if not output:match("^Universal Ctags") then
+        Fail("Universal Ctags with JSON support is required.")
+        return false
+    end
+    output, err = shell.ExecCommand(Setting("fzf"), "--version")
+    if err ~= nil then
+        Fail("Unable to run fzf: " .. tostring(err))
+        return false
+    end
+    local major, minor, patch = output:match("^(%d+)%.(%d+)%.?(%d*)")
+    major, minor, patch = tonumber(major), tonumber(minor), tonumber(patch) or 0
+    if major == nil or (major == 0 and (minor < 60 or (minor == 60 and patch < 2))) then
+        Fail("fzf 0.60.2 or newer is required. Found: " .. output)
+        return false
+    end
+    return true
+end
 
-            if tag ~= nil and tag._type == "tag" then
-                table.insert(tags, tag)
+-- Read and validate tags for the saved file, returning nil on failure.
+function InvokeCTags(bp)
+    local sort = Setting("sort")
+    if sort ~= "yes" and sort ~= "no" and sort ~= "foldcase" then
+        Fail("ctags.sort must be yes, no, or foldcase.")
+        return nil
+    end
+    local output, err = shell.ExecCommand(
+        Setting("executable"), "--fields=+lnSs", "--output-format=json",
+        "--sort=" .. sort, "-f", "-", bp.Buf.AbsPath)
+    if err ~= nil then
+        Fail("ctags failed: " .. tostring(err) .. " " .. output)
+        return nil
+    end
+    local tags = {}
+    for line in output:gmatch("[^\r\n]+") do
+        local ok, tag = pcall(json_decode, line)
+        if not ok or type(tag) ~= "table" then
+            Fail("Invalid ctags JSON: " .. tostring(tag))
+            return nil
+        end
+        if tag._type == "tag" then
+            if type(tag.name) ~= "string" or tag.name == ""
+                or type(tag.line) ~= "number" or tag.line < 1
+                or tag.line % 1 ~= 0 or tag.line > bp.Buf:LinesNum() then
+                Fail("ctags returned an invalid tag or a line outside the buffer.")
+                return nil
             end
+            table.insert(tags, tag)
         end
     end
-
     return tags
 end
 
--- Present tags in fzf with an optional query and return the selected line or nil.
+-- Run the picker and restore temporary resources; return a selected line or nil.
 local function InvokeFzf(bufferFilename, tags, query)
-    -- Strip surrounding whitespace and all line breaks from shell output.
-    local function trim_string(str)
-        str = string.gsub(str, '^%s+', '')
-        str = string.gsub(str, '%s+$', '')
-        str = string.gsub(str, '[\n\r]+', '')
-        return str
+    local filename, file, openErr
+    for attempt = 1, 10 do
+        filename = go_filepath.Join(go_os.TempDir(),
+            "micro-ctags-" .. tostring(go_os.Getpid()) .. "-" .. tostring(math.random(1, 2147483647)))
+        file, openErr = go_os.OpenFile(filename, go_os.O_WRONLY + go_os.O_CREATE + go_os.O_EXCL, 384)
+        if openErr == nil or not go_os.IsExist(openErr) then
+            break
+        end
     end
-
-    local filename = os.tmpname()
-    local file, openErr = io.open(filename, "w")
-
     if file == nil then
-        micro.InfoBar():Error("Unable to create temporary tag file: " .. tostring(openErr))
+        Fail("Unable to create temporary tag file: " .. tostring(openErr))
         return nil
     end
-
     for _, tag in ipairs(tags) do
-        -- IMPORTANT: Ensure the order here matches the fzf indices
-        -- {1} = line_number
-        -- {2} = kind
-        -- {3} = name[..signature]
-        local tagInfo =
-            tostring(tag.line)
-            .. "," .. tostring(tag.kind)
-            .. "," .. tag.name .. (tag.signature or "")
-        local ok, writeErr = file:write(tagInfo .. "\n")
-        micro.Log("[ctags] Writing tag to temporary file: " .. tagInfo)
-
-        if ok == nil then
-            file:close()
+        local record = tostring(tag.line) .. "\t" .. CleanField(tag.kind)
+            .. "\t" .. CleanField(tag.name) .. CleanField(tag.signature) .. "\n"
+        local written, writeErr = file:WriteString(record)
+        if writeErr ~= nil or written ~= #record then
+            file:Close()
             os.remove(filename)
-            micro.InfoBar():Error("Unable to write temporary tag file: " .. tostring(writeErr))
+            Fail("Unable to write temporary tag file: " .. tostring(writeErr))
             return nil
         end
     end
-
-    local closed, closeErr = file:close()
-
-    if closed == nil then
+    local closeErr = file:Close()
+    if closeErr ~= nil then
         os.remove(filename)
-        micro.InfoBar():Error("Unable to close temporary tag file: " .. tostring(closeErr))
+        Fail("Unable to close temporary tag file: " .. tostring(closeErr))
         return nil
     end
-
-    micro.Log("[ctags] Temporary tag file created: " .. filename)
-
-    -- Run fzf to select a tag from the temporary file
-    local prefix
-    local quoteChar
-    local altQuoteChar
-    local suffix
-    if GetOS() == "windows" then
-        prefix = "CMD.EXE /C type " .. filename
-        quoteChar = "\""
-        suffix = ""
-    else
-        prefix = "bash -c \"cat " .. filename
-        quoteChar = "'"
-        suffix = "\""
+    local windows = IsWindows()
+    local inputCommand = windows and 'type "%MICRO_CTAGS_INPUT%"'
+        or 'cat -- "$MICRO_CTAGS_INPUT"'
+    local preview = windows and "echo Type: {2}, Line: {1}"
+        or "printf 'Type: %s, Line: %s\\n' {2} {1}"
+    local arguments = {
+        Setting("fzf"), "--accept-nth=1", "--with-nth=3..", "--delimiter=\t",
+        "--border-label=ctags", "--border=rounded", "--cycle", "--no-sort",
+        "--header=Tags from " .. CleanField(bufferFilename) .. "\nEnter: jump | Esc: cancel",
+        "--height=50%", "--highlight-line",
+        "--ignore-case", "--info=inline", "--layout=reverse-list",
+        "--margin=10%,10%,10%,10%", "--pointer=>", "--preview=" .. preview,
+        "--preview-window=down:1,border-none",
+        "--with-shell=" .. (windows and "" or "/bin/sh -c"),
+        "--query=" .. CleanField(query),
+    }
+    for index, argument in ipairs(arguments) do
+        arguments[index] = QuoteArgument(argument)
     end
-
-    -- IMPORTANT: Ensure the indices here match the ctags file output
-    -- {1} = line_number
-    -- {2} = kind
-    -- {3} = name[..signature]
-    local command = prefix
-        .. " | fzf"
-        -- Define which fields to print on accept
-        .. " --accept-nth=1"
-        -- Transform the presentation of each line using field index expressions
-        .. " --with-nth=3"
-        -- Field delimiter regex (default: AWK-style)
-        .. " --delimiter=,"
-        .. " --border-label=ctags"
-        .. " --border=rounded"
-        .. " --cycle"
-        .. " --footer " .. quoteChar .. "Tags from " .. bufferFilename .. quoteChar
-        .. " --header " .. quoteChar .. "Press Enter to choose function, or ESC to exit" .. quoteChar
-        .. " --height 50%"
-        .. " --highlight-line"
-        .. " --ignore-case"
-        .. " --info=inline"
-        .. " --input-border=none"
-        .. " --layout=reverse-list"
-        .. " --margin=10%,10%,10%,10%"
-        .. " --pointer=➤"
-        .. " --preview " .. quoteChar .. "echo Type: {2}; Line: {1}" .. quoteChar
-        .. " --preview-window=down:1,border-none"
-    if query ~= nil then
-        command = command .. " --query " .. quoteChar .. query .. quoteChar
+    local environment = {
+        MICRO_CTAGS_INPUT = filename,
+        FZF_DEFAULT_COMMAND = inputCommand,
+        FZF_DEFAULT_OPTS = "",
+        FZF_DEFAULT_OPTS_FILE = "",
+    }
+    if windows then
+        environment.SHELL = "cmd.exe"
     end
-    command = command .. suffix
-
-    micro.Log("[ctags] Running command: " .. command)
-
-    -- Use RunInteractiveShell rather than popen() for better control over the shell environment.
-    -- param 2: non-interactive shell. Don't want output from fzf sent to screen.
-    -- param 3: wait for the command to complete before returning.
-    local output, err = shell.RunInteractiveShell(command, false, true)
-    if err ~= nil then
-        micro.InfoBar():Error("fzf failed: " .. tostring(err))
-        return nil
+    local previous = {}
+    for name, value in pairs(environment) do
+        previous[name] = go_os.Getenv(name)
+        local err = go_os.Setenv(name, value)
+        if err ~= nil then
+            for restoredName, old in pairs(previous) do
+                go_os.Setenv(restoredName, old)
+            end
+            os.remove(filename)
+            Fail(err)
+            return nil
+        end
     end
-    -- clean up stdout -- remove leading/trailing whitespace and newlines
-    output = trim_string(output)
-    micro.Log("[ctags] Fzf returned output: [" .. tostring(output) .. "]")
-
-    -- Remove temporary file
+    local ok, output, err = pcall(shell.RunInteractiveShell, table.concat(arguments, " "), false, true)
+    for name, old in pairs(previous) do
+        go_os.Setenv(name, old)
+    end
     os.remove(filename)
-
-    if output == nil or output == "" then
-        micro.InfoBar():Error("[ctags] Fzf returned no output")
+    if not ok then
+        Fail("fzf failed: " .. tostring(output))
         return nil
     end
-
+    if err ~= nil then
+        local status = tostring(err):match("exit status (%d+)")
+        if status ~= "1" and status ~= "130" then
+            Fail("fzf failed: " .. tostring(err))
+        end
+        return nil
+    end
+    output = (output or ""):match("^%s*(.-)%s*$")
+    if output == "" then
+        return nil
+    end
     local lineNumber = tonumber(output)
-    if lineNumber == nil then
-        micro.InfoBar():Error("fzf returned an invalid line number: " .. tostring(output))
-        return nil
+    for _, tag in ipairs(tags) do
+        if tag.line == lineNumber then
+            return lineNumber
+        end
     end
-
-    return lineNumber
+    Fail("fzf returned an invalid line number: " .. output)
+    return nil
 end
 
--- Check required tools and versions, then register the ctags navigation command.
+-- Clear the selection, move to a valid buffer location, and reveal the cursor.
+local function Jump(bp, location)
+    bp.Cursor:ResetSelection()
+    bp.Cursor:GotoLoc(buffer.Loc(location.X, location.Y))
+    bp.Cursor:Relocate()
+    bp:Relocate()
+end
+
+-- Choose a tag using the initial query and record the origin before jumping.
+local function Navigate(bp, args)
+    if bp.Buf.Path == "" then
+        micro.InfoBar():Message("Save this buffer before looking up tags.")
+        return
+    end
+    if bp.Buf:Modified() then
+        micro.InfoBar():Message("Save changes before looking up tags; ctags reads the file on disk.")
+        return
+    end
+    if not CheckTools() then
+        return
+    end
+    local query = ""
+    if args ~= nil and #args > 0 then
+        query = table.concat(args, " ")
+    elseif bp.Cursor:HasSelection() then
+        query = util.String(bp.Cursor:GetSelection())
+    elseif Setting("wordquery") then
+        query = util.String(bp.Buf:WordAt(buffer.Loc(bp.Cursor.X, bp.Cursor.Y)))
+    end
+    local tags = InvokeCTags(bp)
+    if tags == nil then
+        return
+    end
+    if #tags == 0 then
+        micro.InfoBar():Message("No tags found.")
+        return
+    end
+    local _, fileName = go_filepath.Split(bp.Buf.AbsPath)
+    local lineNumber = InvokeFzf(fileName, tags, query)
+    if lineNumber == nil then
+        return
+    end
+    local locations = history[bp.Buf.AbsPath] or {}
+    history[bp.Buf.AbsPath] = locations
+    table.insert(locations, { X = bp.Cursor.X, Y = bp.Cursor.Y })
+    if #locations > 100 then
+        table.remove(locations, 1)
+    end
+    Jump(bp, { X = 0, Y = lineNumber - 1 })
+    micro.InfoBar():Message(string.format("Jumped to line %i", lineNumber))
+end
+
+-- Register plugin settings, navigation commands, and the help document.
 function init()
-    local output, err = shell.ExecCommand("ctags", "--version")
-    if err ~= nil then
-        -- err is a golang "errors.New(...)"
-        micro.InfoBar():Error(err)
-        return
-    else
-        micro.Log("[ctags] ctags version: " .. output:match("[^\r\n]+"))
-    end
+    config.RegisterCommonOption("ctags", "executable", "ctags")
+    config.RegisterCommonOption("ctags", "fzf", "fzf")
+    config.RegisterCommonOption("ctags", "sort", "foldcase")
+    config.RegisterCommonOption("ctags", "wordquery", true)
 
-    local ctagsFlavor = output:match("^([a-zA-Z]+)")
-    if ctagsFlavor ~= "Universal" then
-        micro.InfoBar():Error("[ctags] Universal Ctags is required. Found: " .. tostring(ctagsFlavor))
-        return
-    end
+    config.MakeCommand("ctags", Navigate, config.NoComplete)
 
-    local output, err = shell.ExecCommand("fzf", "--version")
-    if err ~= nil then
-        micro.InfoBar():Error(err)
-        return
-    else
-        micro.Log("[ctags] fzf version: " .. output)
-    end
+    -- Restore the most recent jump origin for the current file, if available.
+    config.MakeCommand("ctags-back", function(bp)
+        local locations = history[bp.Buf.AbsPath]
+        if locations == nil or #locations == 0 then
+            micro.InfoBar():Message("No previous ctags location in this buffer.")
+            return
+        end
+        Jump(bp, table.remove(locations))
+    end, config.NoComplete)
 
-    -- e.g. "0.29 (devel)", "0.74.5 (c0a193e0)"
-    local major, minor = output:match("^(%d+)%.(%d+)")
-    if major == nil then
-        micro.InfoBar():Error("[ctags] Unable to parse fzf version: " .. output)
-        return
-    end
+    config.AddRuntimeFile("ctags", config.RTHelp, "help/ctags.md")
+end
 
-    local major, minor = tonumber(major), tonumber(minor)
-    -- --accept-nth requires fzf 0.60.2 or newer.
-    if major == 0 and minor < 61 then
-        micro.InfoBar():Error("[ctags] fzf 0.60.2 or newer is required. Found: " .. output)
-        return
-    end
-
-    config.MakeCommand(
-        "ctags",
-        -- Use selected text to filter tags, then jump to the chosen tag's line.
-        function(bp, args)
-            -- Use selection as initial fzf query, if available.
-            local query = nil
-
-            if bp.Cursor:HasSelection() then
-                local from, to = bp.Cursor.CurSelection[1], bp.Cursor.CurSelection[2]
-                if (from.Y == to.Y) then
-                    query = bp.Buf:Line(from.Y):sub(from.X + 1, to.X)
-                end
-            end
-
-            -- Parse ctags for file in current buffer.
-            local tags = InvokeCTags(bp)
-            if tags == nil or #tags == 0 then
-                micro.InfoBar():Message("No tags found.")
-                return
-            end
-
-            -- Invoke fzf to select a tag from the list of tags.
-            -- Buffer:AbsPath returns the absolute path to the file on disk
-            local _, fileName = go_filepath.Split(bp.Buf.AbsPath)
-            local lineNumber = InvokeFzf(fileName, tags, query)
-            if lineNumber == nil then
-                micro.Log("[ctags] Cancelled.")
-                return
-            end
-
-            -- ResetSelection resets the user's selection
-            -- Without this, GotoLoc won't move the cursor correctly if there was a previous selection.
-            bp.Cursor:ResetSelection()
-
-            -- GotoLoc puts the cursor at the given cursor's location and gives the current cursor its selection too
-            bp.Cursor:GotoLoc({ X = 0, Y = lineNumber - 1 })
-
-            micro.InfoBar():Message(string.format("Jumped to line %i", lineNumber))
-        end,
-        config.NoComplete
-    )
+-- Discard a file's jump history when its buffer closes.
+function onBufferClose(buf)
+    history[buf.AbsPath] = nil
 end
