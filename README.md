@@ -160,6 +160,27 @@ See [LICENSE](./LICENSE) for full text.
 
 ## Updating archive
 
-When a new version is created, a new archive release can be created using:
+When a new version is created, a new archive release (e.g. "v1.0.0") can be created using:
 
-`zip -r -9 .\archive\v1.0.0.zip * -x 'archive/*' -x 'tests/*' -x '.gitignore'`
+```PowerShell
+$dest = "$env:TEMP\v1.0.0.zip"
+Remove-Item -Force $dest
+zip -r -9 $dest * -x 'archive/*' -x 'tests/*' -x '.gitignore'
+Write-Host -ForegroundColor Yellow $dest
+```
+
+Then go to repo
+
+```PowerShell
+Start-Process -FilePath ([Uri](git.exe config --get remote.origin.url)).AbsoluteUri
+```
+
+and do:
+
+* Create a tag for your release (e.g. v1.0.0)
+* Go to your repository’s Releases tab > Create a new release.
+* Select your tag (or choose "Create new tag"), add a title and description,
+* Attach zip file.
+* Click Publish release.
+* GitHub will automatically generate a ZIP and tarball of the tagged commit, which you can download from the release page.
+
