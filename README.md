@@ -54,14 +54,29 @@ winget install --exact --id junegunn.fzf
 winget install --exact --id UniversalCtags.Ctags
 ```
 
-### All platforms
+### Installation
 
-```bash
-mkdir ~/.config/micro/plug
-git clone https://github.com/milnak/micro-ctags ~/.config/micro/plug/ctags
+Settings:
+
+Add this repo as a pluginrepos option in the `~/.config/micro/settings.json` file (it is necessary to restart the micro after this change):
+
+```json
+{
+  "pluginrepos": [
+      "https://raw.githubusercontent.com/milnak/micro-ctags/main/repo.json"
+  ]
+}
 ```
 
-("micro --plugin install ctags" functionality coming soon)
+Installation:
+
+In your micro editor press `Ctrl-e` and run command:
+
+`> plugin install ctags`
+
+or run in your shell:
+
+`micro -plugin install ctags`
 
 ## Usage
 
