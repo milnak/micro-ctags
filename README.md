@@ -134,3 +134,17 @@ is attached. Set `FZF_TEST_EXECUTABLE` to test a specific fzf executable.
 If a Scoop ctags shim cannot be executed by Micro on Windows, set
 `ctags.executable` to the real executable's full path, or add its installation
 directory to the front of `$env:PATH` before starting Micro.
+
+## Contributions
+
+All contributions are welcome by pull request or issue.
+
+## License
+
+See [LICENSE](./LICENSE) for full text.
+
+## Updating archive
+
+When a new version is created, a new archive release can be created using:
+
+`zip -r -9 .\archive\v1.0.0 * -x 'archive/*' -x 'tests/*' -x '.gitignore'`

@@ -6,10 +6,11 @@
   "Versions": [
     {
       "Version": "1.0.0",
-      "Url": "https://github.com/micro-editor/ctags-plugin/archive/v1.0.0.zip",
+      "Url": "https://github.com/milnak/micro-ctags/archive/v1.0.0.zip",
       "Require": {
         "micro": ">=2.0.0"
       }
     }
   ]
 }]
+
