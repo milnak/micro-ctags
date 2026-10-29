@@ -1,17 +1,13 @@
 [
   {
     "Name": "ctags",
-    "Description": "Jump to any function, class or heading.",
-    "Website": "https://github.com/milnak/micro-ctags",
-    "Tags": [
-      "ctags",
-      "fzf",
-      "symbols"
-    ],
+    "Description": "Ctags integration for micro",
+    "Author": "milnak",
+    "Tags": ["ctags", "navigation"],
     "Versions": [
       {
         "Version": "1.0.0",
-        "Url": "https://github.com/milnak/micro-ctags/releases/download/v1.0.0/v1.0.0.zip",
+        "Url": "https://github.com/milnak/micro-ctags/archive/refs/tags/v1.0.0.zip",
         "Require": {
           "micro": ">=2.0.0"
         }
