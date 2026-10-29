@@ -2,7 +2,9 @@
 -- Copyright 2026 Jeff Miller
 -- https://github.com/milnak/micro-ctags
 -- MIT license
-VERSION = "1.0.0"
+
+-- GetInstalledPluginVersion returns the string of the exported VERSION variable of a loaded plugin
+VERSION = "1.0.2"
 
 local micro = import("micro")
 local shell = import("micro/shell")
